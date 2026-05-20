@@ -1,0 +1,115 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────
+# Hyperlocal Delivery Slot Optimizer — Docker Compose Stack
+#
+# Services:
+#   postgres  — persistent store (zones, slots, orders, fleet)
+#   redis     — fast slot counters & zone-load cache
+#   app       — Spring Boot backend (port 8080)
+#   dashboard — Nginx serving the plain-HTML dashboard (port 3000)
+# ─────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: dso-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${DB_NAME:-delivery_optimizer}
+      POSTGRES_USER:     ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASS:-postgres}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-delivery_optimizer}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - dso-net
+
+  # ── Redis ───────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: dso-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - dso-net
+
+  # ── Spring Boot App ─────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dso-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DB_HOST:     postgres
+      DB_PORT:     5432
+      DB_NAME:     ${DB_NAME:-delivery_optimizer}
+      DB_USER:     ${DB_USER:-postgres}
+      DB_PASS:     ${DB_PASS:-postgres}
+      REDIS_HOST:  redis
+      REDIS_PORT:  6379
+      SERVER_PORT: 8080
+      # Tunable seed params
+      APP_SLOT_DEFAULT_CAPACITY:      ${SLOT_CAPACITY:-20}
+      APP_SLOT_WINDOW_DURATION_MINUTES: 30
+      APP_SLOT_WINDOWS_PER_DAY:       24
+      APP_SEED_ZONES:                 6
+      APP_SEED_RUN_ON_STARTUP:        true
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - dso-net
+
+  # ── Dashboard (Nginx) ───────────────────────────────────────
+  dashboard:
+    image: nginx:1.25-alpine
+    container_name: dso-dashboard
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${DASHBOARD_PORT:-3000}:80"
+    volumes:
+      - ./dashboard:/usr/share/nginx/html:ro
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - dso-net
+
+# ── Volumes & Network ───────────────────────────────────────
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  dso-net:
+    driver: bridge

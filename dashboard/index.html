@@ -392,7 +392,7 @@
 <div id="toast"></div>
 
 <script>
-const API = '/api';
+const API = 'https://delivery-optimizer-n7a2.onrender.com/api';
 let zoneMap = {};          // zoneId → ZoneLoadResponse
 let selectedZoneId = null;
 let selectedSlotId  = null;
@@ -682,7 +682,7 @@ async function simulateBulk() {
       })
     });
     const data = await res.json();
-    showToast(`✅ ${data.allocated} allocated · ${data.failed} failed`);
+    showToast(`${data.allocated} allocated · ${data.failed} failed`);
     addLog(`Bulk: ${data.allocated}/${data.requested} allocated`, data.failed > 0 ? '' : 'ok');
     if (selectedZoneId) loadSlots(selectedZoneId);
   } catch (e) {
